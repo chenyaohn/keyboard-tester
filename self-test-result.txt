@@ -1,0 +1,13 @@
+﻿SELF-TEST: PASS
+PASS  完整布局应为 104 键，实际 104
+PASS  键位 ID 不应重复
+PASS  A 键映射
+PASS  主 Enter 与数字区 Enter 应区分
+PASS  87 键布局数量
+PASS  按下、重复和松开计数
+PASS  已测试键统计
+PASS  按住时长计算
+PASS  快速连续抖动提示
+PASS  模拟输入应忽略
+PASS  报告生成
+PASS  长按时长记录
