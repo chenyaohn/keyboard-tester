@@ -134,6 +134,7 @@ namespace KeyboardTester
         private static readonly List<KeySpec> AllSpecs;
         private static readonly Dictionary<int, KeySpec> SpecsById;
         private static readonly Dictionary<uint, KeySpec> StandardByVirtualKey;
+        private static readonly Dictionary<uint, KeySpec> ExtendedByVirtualKey;
         private static readonly List<KeySpec> Full104;
         private static readonly List<KeySpec> Tenkeyless87;
 
@@ -142,6 +143,7 @@ namespace KeyboardTester
             AllSpecs = new List<KeySpec>();
             SpecsById = new Dictionary<int, KeySpec>();
             StandardByVirtualKey = new Dictionary<uint, KeySpec>();
+            ExtendedByVirtualKey = new Dictionary<uint, KeySpec>();
 
             Add(0x1B, false, "Esc", "", 0.00f, 0.00f, 1.00f, 0.90f, false, true);
 
@@ -280,6 +282,56 @@ namespace KeyboardTester
 
         public static KeySpec Resolve(uint virtualKey, bool extended)
         {
+            return Resolve(virtualKey, extended, 0);
+        }
+
+        public static KeySpec Resolve(uint virtualKey, bool extended, uint scanCode)
+        {
+            if (!extended)
+            {
+                int navigationKey = (int)virtualKey;
+                if (scanCode == 0x48 && navigationKey == 0x26)
+                {
+                    return GetById(0x68);
+                }
+                if (scanCode == 0x50 && navigationKey == 0x28)
+                {
+                    return GetById(0x62);
+                }
+                if (scanCode == 0x4B && navigationKey == 0x25)
+                {
+                    return GetById(0x64);
+                }
+                if (scanCode == 0x4D && navigationKey == 0x27)
+                {
+                    return GetById(0x66);
+                }
+                if (scanCode == 0x47 && navigationKey == 0x24)
+                {
+                    return GetById(0x67);
+                }
+                if (scanCode == 0x4F && navigationKey == 0x23)
+                {
+                    return GetById(0x61);
+                }
+                if (scanCode == 0x49 && navigationKey == 0x21)
+                {
+                    return GetById(0x69);
+                }
+                if (scanCode == 0x51 && navigationKey == 0x22)
+                {
+                    return GetById(0x63);
+                }
+                if (scanCode == 0x52 && navigationKey == 0x2D)
+                {
+                    return GetById(0x60);
+                }
+                if (scanCode == 0x53 && navigationKey == 0x2E)
+                {
+                    return GetById(0x6E);
+                }
+            }
+
             int key = (int)virtualKey;
             if (key == 0x0D && extended)
             {
@@ -287,6 +339,11 @@ namespace KeyboardTester
             }
 
             KeySpec spec;
+            if (extended && ExtendedByVirtualKey.TryGetValue(virtualKey, out spec))
+            {
+                return spec;
+            }
+
             if (StandardByVirtualKey.TryGetValue(virtualKey, out spec))
             {
                 return spec;
@@ -337,6 +394,10 @@ namespace KeyboardTester
             {
                 StandardByVirtualKey[virtualKey] = spec;
             }
+            else if (id == (int)virtualKey)
+            {
+                ExtendedByVirtualKey[virtualKey] = spec;
+            }
         }
 
         private static void Add(
@@ -366,6 +427,10 @@ namespace KeyboardTester
                 functionRow);
             AllSpecs.Add(spec);
             SpecsById[id] = spec;
+            if (extended && id == (int)virtualKey)
+            {
+                ExtendedByVirtualKey[virtualKey] = spec;
+            }
         }
     }
 
@@ -536,10 +601,26 @@ namespace KeyboardTester
 
         public void Process(uint virtualKey, bool extended, bool isDown, bool injected)
         {
-            ProcessAt(virtualKey, extended, isDown, injected, NowMs);
+            Process(virtualKey, extended, 0, isDown, injected);
+        }
+
+        public void Process(uint virtualKey, bool extended, uint scanCode, bool isDown, bool injected)
+        {
+            ProcessAt(virtualKey, extended, scanCode, isDown, injected, NowMs);
         }
 
         public void ProcessAt(uint virtualKey, bool extended, bool isDown, bool injected, long nowMs)
+        {
+            ProcessAt(virtualKey, extended, 0, isDown, injected, nowMs);
+        }
+
+        public void ProcessAt(
+            uint virtualKey,
+            bool extended,
+            uint scanCode,
+            bool isDown,
+            bool injected,
+            long nowMs)
         {
             if (injected)
             {
@@ -548,7 +629,7 @@ namespace KeyboardTester
                 return;
             }
 
-            KeySpec spec = KeyboardModel.Resolve(virtualKey, extended);
+            KeySpec spec = KeyboardModel.Resolve(virtualKey, extended, scanCode);
             if (spec == null)
             {
                 string name = KeyboardModel.DescribeVirtualKey(virtualKey);
@@ -1301,25 +1382,8 @@ namespace KeyboardTester
         private const int WmSysKeyUp = 0x0105;
         private const uint LlkhfInjected = 0x10;
         private const uint LlkhfExtended = 0x01;
-        private const int VkTab = 0x09;
-        private const int VkEscape = 0x1B;
-        private const int VkSnapshot = 0x2C;
-        private const int VkSpace = 0x20;
-        private const int VkControl = 0x11;
-        private const int VkMenu = 0x12;
-        private const int VkLeftWindows = 0x5B;
-        private const int VkRightWindows = 0x5C;
-        private const int VkApps = 0x5D;
-        private const int VkLeftShift = 0xA0;
-        private const int VkRightShift = 0xA1;
-        private const int VkLeftControl = 0xA2;
-        private const int VkRightControl = 0xA3;
-        private const int VkLeftAlt = 0xA4;
-        private const int VkRightAlt = 0xA5;
-
         private readonly LowLevelKeyboardProc callback;
         private readonly IntPtr targetWindow;
-        private readonly HashSet<int> modifiersDown;
         private IntPtr hookHandle;
 
         public event EventHandler<LowLevelKeyboardEventArgs> KeyEvent;
@@ -1328,7 +1392,6 @@ namespace KeyboardTester
         {
             targetWindow = windowHandle;
             callback = HookCallback;
-            modifiersDown = new HashSet<int>();
             IntPtr moduleHandle = GetModuleHandle(null);
             hookHandle = SetWindowsHookEx(WhKeyboardLl, callback, moduleHandle, 0);
             if (hookHandle == IntPtr.Zero)
@@ -1363,7 +1426,6 @@ namespace KeyboardTester
                     bool injected = (data.Flags & LlkhfInjected) != 0;
                     bool isTarget = GetForegroundWindow() == targetWindow;
 
-                    UpdateModifierState(virtualKey, isDown);
                     if (isTarget)
                     {
                         EventHandler<LowLevelKeyboardEventArgs> handler = KeyEvent;
@@ -1375,94 +1437,15 @@ namespace KeyboardTester
                                     virtualKey, extended, isDown, injected, data.ScanCode));
                         }
 
-                        if (!injected && ShouldSuppressSystemKey((int)virtualKey))
-                        {
-                            return new IntPtr(1);
-                        }
+                        // The tester handles the physical event itself. Swallowing it here
+                        // prevents arrows from changing the focused layout picker and
+                        // prevents Enter/Space from activating focused buttons.
+                        return new IntPtr(1);
                     }
                 }
             }
 
             return CallNextHookEx(hookHandle, nCode, wParam, lParam);
-        }
-
-        private bool ShouldSuppressSystemKey(int virtualKey)
-        {
-            if (virtualKey == VkLeftWindows || virtualKey == VkRightWindows || virtualKey == VkApps ||
-                virtualKey == VkLeftAlt || virtualKey == VkRightAlt ||
-                virtualKey == VkSnapshot)
-            {
-                return true;
-            }
-
-            bool ctrl = modifiersDown.Contains(VkControl) ||
-                        modifiersDown.Contains(VkLeftControl) ||
-                        modifiersDown.Contains(VkRightControl);
-            bool alt = modifiersDown.Contains(VkMenu) ||
-                       modifiersDown.Contains(VkLeftAlt) ||
-                       modifiersDown.Contains(VkRightAlt);
-
-            if (ctrl && virtualKey == VkEscape)
-            {
-                return true;
-            }
-            if (alt && (virtualKey == VkTab || virtualKey == VkEscape || virtualKey == VkSpace))
-            {
-                return true;
-            }
-
-            return false;
-        }
-
-        private void UpdateModifierState(uint virtualKey, bool isDown)
-        {
-            int key = (int)virtualKey;
-            bool modifier = key == VkControl || key == VkMenu ||
-                            key == VkLeftControl || key == VkRightControl ||
-                            key == VkLeftAlt || key == VkRightAlt ||
-                            key == VkLeftShift || key == VkRightShift ||
-                            key == VkLeftWindows || key == VkRightWindows;
-            if (!modifier)
-            {
-                return;
-            }
-
-            if (isDown)
-            {
-                modifiersDown.Add(key);
-                if (key == VkLeftControl || key == VkRightControl)
-                {
-                    modifiersDown.Add(VkControl);
-                }
-                if (key == VkLeftAlt || key == VkRightAlt)
-                {
-                    modifiersDown.Add(VkMenu);
-                }
-            }
-            else
-            {
-                modifiersDown.Remove(key);
-                if ((key == VkLeftControl || key == VkRightControl) && !IsAnyModifierDown(VkLeftControl, VkRightControl))
-                {
-                    modifiersDown.Remove(VkControl);
-                }
-                if ((key == VkLeftAlt || key == VkRightAlt) && !IsAnyModifierDown(VkLeftAlt, VkRightAlt))
-                {
-                    modifiersDown.Remove(VkMenu);
-                }
-            }
-        }
-
-        private bool IsAnyModifierDown(params int[] keys)
-        {
-            foreach (int key in keys)
-            {
-                if (modifiersDown.Contains(key))
-                {
-                    return true;
-                }
-            }
-            return false;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -1664,7 +1647,7 @@ namespace KeyboardTester
             {
                 TextRenderer.DrawText(
                     g,
-                    "安全提示：检测期间会临时拦截 Win、Alt、Print Screen 等可能误触的系统键；关闭请点右上角 ×。",
+                    "检测期间按键只用于检测，不会操作界面或触发系统快捷键；界面操作请用鼠标，关闭请点右上角 ×。",
                     noteFont,
                     new Rectangle(26, ClientSize.Height - 32, ClientSize.Width - 330, 20),
                     Color.FromArgb(115, Theme.Muted),
@@ -1713,7 +1696,7 @@ namespace KeyboardTester
 
         private void Hook_KeyEvent(object sender, LowLevelKeyboardEventArgs e)
         {
-            session.Process(e.VirtualKey, e.Extended, e.IsDown, e.Injected);
+            session.Process(e.VirtualKey, e.Extended, e.ScanCode, e.IsDown, e.Injected);
             RefreshInterface();
         }
 
@@ -1874,6 +1857,16 @@ namespace KeyboardTester
                     "主 Enter 与数字区 Enter 应区分",
                     lines,
                     ref failures);
+                Check(
+                    KeyboardModel.Resolve(0x26, false, 0x48).Id == 0x68,
+                    "NumLock 关闭时数字区 8 应映射为数字区上键",
+                    lines,
+                    ref failures);
+                Check(
+                    KeyboardModel.Resolve(0x26, true, 0x48).Id == 0x26,
+                    "方向键上不应被误映射为数字区 8",
+                    lines,
+                    ref failures);
                 Check(KeyboardModel.GetVisible(LayoutMode.Tenkeyless87).Count == 87, "87 键布局数量", lines, ref failures);
 
                 KeyboardSession session = new KeyboardSession(LayoutMode.Full104);
@@ -1891,6 +1884,17 @@ namespace KeyboardTester
                 session.ProcessAt(0x42, false, false, false, 228);
                 KeyResult b = session.GetResult(KeyboardModel.GetById(0x42));
                 Check(b.BounceCount == 1 && b.HasBounceWarning, "快速连续抖动提示", lines, ref failures);
+
+                KeyboardSession numpadSession = new KeyboardSession(LayoutMode.Full104);
+                numpadSession.ProcessAt(0x26, false, 0x48, true, false, 100);
+                numpadSession.ProcessAt(0x26, false, 0x48, false, false, 160);
+                KeyResult numpadUp = numpadSession.GetResult(KeyboardModel.GetById(0x68));
+                KeyResult navigationUp = numpadSession.GetResult(KeyboardModel.GetById(0x26));
+                Check(numpadUp != null && navigationUp != null &&
+                      numpadUp.Tested && !navigationUp.Tested,
+                    "数字区方向输入应计到物理数字键",
+                    lines,
+                    ref failures);
 
                 session.ProcessAt(0x43, false, true, true, 300);
                 Check(session.IgnoredInjectedEvents == 1, "模拟输入应忽略", lines, ref failures);
